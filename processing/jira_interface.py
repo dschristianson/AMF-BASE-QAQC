@@ -7,6 +7,7 @@ from jira_names import JIRANames
 from report_status import ReportStatus
 from logger import Logger
 from urllib.error import HTTPError
+
 import json
 import site_attrs
 import urllib.request
@@ -48,6 +49,18 @@ class JIRAInterface:
                 self.test_site = 'test-Site'
             self.jira_ws_base = f'{self.jira_host}{self.jira_base_path}'
             self.org_dict = self.get_organizations()
+
+    def _get_default_auth(self):
+        return f'Basic {self.user_token}'
+
+    def _get_default_http_error_msg_code(self, ws, error):
+        err_code = error.code
+        err_msg = error.read().decode('utf-8')
+        return f'{ws} returned status code {err_code}\n{err_msg}', err_code
+
+    def _get_default_http_exception(self, ws, error):
+        exception_msg, _ = self._get_default_http_error_msg_code(ws, error)
+        return Exception(exception_msg)
 
     def create_format_issue(self, site_id, process_id, start_end_times,
                             upload_token, uploader, summary, description,
@@ -100,6 +113,23 @@ class JIRAInterface:
             return result_msg
         raise Exception(result_msg)
 
+    def create_site_issue(
+            self, site_id, reporter, summary, description, participants):
+        issue_name = JIRANames.site_QAQC_issue_name
+        msg = {
+            'fields': {
+                'project': {'key': self.jira_project},
+                'summary': summary,
+                'description': description,
+                'issuetype': {'name': issue_name},
+                'reporter': {'name': reporter},
+                JIRANames.site_id: site_id
+            }}
+        result_msg, result = self._create_issue(msg)
+        if result == HTTPStatus.CREATED:
+            return result_msg
+        raise Exception(result_msg)
+
     def _create_issue(self, msg):
         url = f'{self.jira_ws_base}/issue'
         try:
@@ -108,13 +138,13 @@ class JIRAInterface:
             json_data = json.dumps(msg)
             msg_bytes = json_data.encode('utf-8')  # needs to be bytes
             req.add_header('Content-Length', len(msg_bytes))
-            req.add_header('Authorization', f'Basic {self.user_token}')
+            req.add_header('Authorization', self._get_default_auth())
             response = urllib.request.urlopen(req, msg_bytes)
             issue = json.loads(response.read().decode('utf-8'))
             return issue['key'], response.getcode()
         except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            return f'{url} returned status code {e.code}\n{err_msg}', e.code
+            err_msg, err_code = self._get_default_http_error_msg_code(url, e)
+            return err_msg, err_code
 
     def add_comment(self, issue_key, message, public=False):
         msg = {'body': message, 'public': public}
@@ -127,42 +157,36 @@ class JIRAInterface:
         try:
             req = urllib.request.Request(url)
             req.add_header('X-ExperimentalApi', 'opt-in')
-            req.add_header('Authorization', f'Basic {self.user_token}')
+            req.add_header('Authorization', self._get_default_auth())
             response = urllib.request.urlopen(req)
             return json.loads(response.read().decode('utf-8'))
         except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            raise Exception(f'{url} returned status code {e.code}\n{err_msg}')
+            self._get_default_http_exception(ws=url, error=e)
 
-    def _basic_post_request(self, msg, url):
+    def _basic_post_request(self, msg, url, is_experimental=False):
         try:
             req = urllib.request.Request(url)
             req.add_header('Content-Type', 'application/json; charset=utf-8')
             json_data = json.dumps(msg)
             msg_bytes = json_data.encode('utf-8')  # needs to be bytes
             req.add_header('Content-Length', len(msg_bytes))
-            req.add_header('Authorization', f'Basic {self.user_token}')
-            return urllib.request.urlopen(req, msg_bytes)
+            req.add_header('Authorization', self._get_default_auth())
+            if is_experimental:
+                req.add_header('X-ExperimentalApi', 'opt-in')
+            post_request = urllib.request.urlopen(req, msg_bytes)
+            if is_experimental:
+                return post_request.getcode(), post_request
+            return post_request
         except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            raise Exception(f'{url} returned status code {e.code}\n{err_msg}')
+            if is_experimental:
+                err_msg, err_code = self._get_default_http_error_msg_code(
+                    url, e)
+                _log.error(err_msg)
+                return err_code, err_msg
+            self._get_default_http_exception(ws=url, error=e)
 
     def _experimental_post_request(self, msg, url):
-        try:
-            req = urllib.request.Request(url)
-            req.add_header('Content-Type', 'application/json; charset=utf-8')
-            json_data = json.dumps(msg)
-            msg_bytes = json_data.encode('utf-8')  # needs to be bytes
-            req.add_header('Content-Length', len(msg_bytes))
-            req.add_header('X-ExperimentalApi', 'opt-in')
-            req.add_header('Authorization', f'Basic {self.user_token}')
-            post_request = urllib.request.urlopen(req, msg_bytes)
-            return post_request.getcode(), post_request
-        except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            err_code = e.getcode()
-            _log.error(f'{url} returned status code {err_code}\n{err_msg}')
-            return err_code, err_msg
+        return self._basic_post_request(msg, url, is_experimental=True)
 
     def _delete_request(self, msg, url):
         try:
@@ -172,11 +196,10 @@ class JIRAInterface:
             msg_bytes = json_data.encode('utf-8')  # needs to be bytes
             req.add_header('Content-Length', len(msg_bytes))
             req.add_header('X-ExperimentalApi', 'opt-in')
-            req.add_header('Authorization', f'Basic {self.user_token}')
+            req.add_header('Authorization', self._get_default_auth())
             return urllib.request.urlopen(req, msg_bytes)
         except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            raise Exception(f'{url} returned status code {e.code}\n{err_msg}')
+            self._get_default_http_exception(ws=url, error=e)
 
     def _basic_put_request(self, msg, url):
         try:
@@ -185,11 +208,10 @@ class JIRAInterface:
             json_data = json.dumps(msg)
             msg_bytes = json_data.encode('utf-8')  # needs to be bytes
             req.add_header('Content-Length', len(msg_bytes))
-            req.add_header('Authorization', f'Basic {self.user_token}')
+            req.add_header('Authorization', self._get_default_auth())
             return urllib.request.urlopen(req, msg_bytes)
         except HTTPError as e:
-            err_msg = e.read().decode('utf-8')
-            raise Exception(f'{url} returned status code {e.code}\n{err_msg}')
+            self._get_default_http_exception(ws=url, error=e)
 
     def _update_issue_fields(self, issue_key, msg):
         msg = {'update': msg}
@@ -251,24 +273,20 @@ class JIRAInterface:
         return self._basic_get_request(url)
 
     def get_prior_data_qaqc_key(self, site_id):
-        url = '{b}/search?{q}'.format(
-            b=self.jira_ws_base, q=self.data_issue_query.format(
-                p=self.jira_project, s=site_id))
+        q = self.data_issue_query.format(p=self.jira_project, s=site_id)
+        url = f'{self.jira_ws_base}/search?{q}'
         issue_dict = self._basic_get_request(url)
-        if len(issue_dict['issues']) != 0:
-            return issue_dict['issues'][0]['key']
-        else:
+        if len(issue_dict['issues']) == 0:
             return None
+        return issue_dict['issues'][0]['key']
 
     def get_format_qaqc_key(self, process_id):
-        url = '{b}/search?{q}'.format(
-            b=self.jira_ws_base, q=self.format_issue_query.format(
-                p=self.jira_project, i=process_id))
+        q = self.format_issue_query.format(p=self.jira_project, i=process_id)
+        url = f'{self.jira_ws_base}/search?{q}'
         issue_dict = self._basic_get_request(url)
-        if len(issue_dict['issues']) != 0:
-            return issue_dict['issues'][0]['key']
-        else:
+        if len(issue_dict['issues']) == 0:
             return None
+        return issue_dict['issues'][0]['key']
 
     def get_sub_issues_to_link(self, key):
         url = f'{self.jira_ws_base}/issue/{key}'
@@ -330,8 +348,8 @@ class JIRAInterface:
         msg = {'usernames': users}
         self._delete_request(msg, url)
 
-    def run_query(self, jql, startAt=0):
-        url = f'{self.jira_ws_base}/search?jql={jql}&startAt={startAt}'
+    def run_query(self, jql, start_at=0):
+        url = f'{self.jira_ws_base}/search?jql={jql}&startAt={start_at}'
         return self._basic_get_request(url)
 
     def ensure_org_exists(self, site_id):
