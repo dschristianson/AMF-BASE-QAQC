@@ -4,8 +4,9 @@ from configparser import ConfigParser
 from future.standard_library import install_aliases
 from http import HTTPStatus
 from jira_names import JIRANames
-from report_status import ReportStatus
 from logger import Logger
+from report_status import ReportStatus
+from typing import Union
 from urllib.error import HTTPError
 
 import json
@@ -19,7 +20,7 @@ _log = Logger().getLogger(__name__)
 
 
 class JIRAInterface:
-    def __init__(self):
+    def __init__(self, configure_organizations: bool = True):
         config = ConfigParser()
         with open('qaqc.cfg') as cfg:
             cfg_section = 'JIRA'
@@ -48,7 +49,8 @@ class JIRAInterface:
             else:
                 self.test_site = 'test-Site'
             self.jira_ws_base = f'{self.jira_host}{self.jira_base_path}'
-            self.org_dict = self.get_organizations()
+            if configure_organizations:
+                self.org_dict = self.get_organizations()
 
     def _get_default_auth(self):
         return f'Basic {self.user_token}'
@@ -248,10 +250,10 @@ class JIRAInterface:
         url = f'{self.jira_ws_base}/issue/{issue_key}/transitions'
         self._basic_post_request(msg, url)
 
-    def add_related_link(self, parrent_issue, child_issue,
+    def add_related_link(self, parent_issue, child_issue,
                          link_type='Relates'):
         msg = {'type': {'name': link_type},
-               'inwardIssue': {'key': parrent_issue},
+               'inwardIssue': {'key': parent_issue},
                'outwardIssue': {'key': child_issue}}
         url = f'{self.jira_ws_base}/issueLink'
         self._basic_post_request(msg, url)
@@ -287,6 +289,82 @@ class JIRAInterface:
         if len(issue_dict['issues']) == 0:
             return None
         return issue_dict['issues'][0]['key']
+
+    def get_format_issues(
+            self, site_id: Union[None, str] = None,
+            issue_key_list: Union[None, list] = None,
+            max_request_count: int = 20,
+            max_results_per_try: int = 50) -> dict:
+        """
+        Get format issues via REST API search
+        """
+
+        format_issues = {}
+        if not site_id and not issue_key_list:
+            _log.error('Site ID or a list of issue keys must be specified.')
+            return format_issues
+
+        fields = [JIRANames.issue_created, JIRANames.issue_reporter,
+                  JIRANames.site_id, JIRANames.process_ids,
+                  JIRANames.upload_token, JIRANames.start_end_dates,
+                  JIRANames.issue_status]
+
+        site_id_query = ''
+        if site_id:
+            site_id_query = f'AND "Site ID" ~ {site_id} '
+
+        key_query = ''
+        if issue_key_list:
+            issue_key_str = "\", \"".join(issue_key_list)
+            key_query = f'AND key IN (\"{issue_key_str}\") '
+
+        jql = (f'project = {self.jira_project} AND issuetype = "Format QAQC Results" {site_id_query}{key_query}'
+               'ORDER BY created DESC')
+
+        url = f'{self.jira_ws_base}/search'
+        total = 0
+        request_count = 0
+        max_results = max_results_per_try
+        start_at = 0
+
+        while total is not None and (total > request_count * max_results if request_count > 0 else True):
+            msg = {"startAt": start_at, "maxResults": max_results, "fields": fields, "jql": jql}
+            response = self._basic_post_request(msg, url)
+
+            if response is None:
+                return format_issues
+
+            response_code = response.getcode()
+
+            if not response_code or response_code != HTTPStatus.OK:
+                _log.warning(f'bad response from jira search api with msg: {msg}')
+                return format_issues
+
+            response_data = json.loads(response.read().decode('utf-8'))
+
+            issue_list = response_data.get('issues', [])
+            for issue in issue_list:
+                key = issue.get('key')
+                issue_info = format_issues.setdefault(key, {})
+                issue_info['site_id'] = issue.get('fields').get(JIRANames.site_id)
+                issue_info['created'] = issue.get('fields').get(JIRANames.issue_created)
+                issue_info['reporter'] = issue.get('fields').get(JIRANames.issue_reporter)
+                issue_info['process_ids'] = issue.get('fields').get(JIRANames.process_ids)
+                issue_info['upload_token'] = issue.get('fields').get(JIRANames.upload_token)
+                issue_info['start_end_dates'] = issue.get('fields').get(JIRANames.start_end_dates)
+                issue_info['upload_token'] = issue.get('fields').get(JIRANames.upload_token)
+                issue_info['status'] = issue.get('fields').get(JIRANames.issue_status).get('name')
+
+            total = response_data.get('total')
+            start_at += max_results
+            request_count += 1
+
+            if request_count > max_request_count:
+                _log.warning(f'Max requests {request_count} is more than the limit in '
+                             'get_format_issues. Stopping request.')
+                break
+
+        return format_issues
 
     def get_sub_issues_to_link(self, key):
         url = f'{self.jira_ws_base}/issue/{key}'

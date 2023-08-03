@@ -1003,6 +1003,7 @@ class DBHandler:
 
         return uploaded_files
 
+    # ToDo: consider removing
     def get_format_issues(
             self, jira_project: str, site_id: Union[None, str] = None,
             issue_key_list: Union[None, list] = None,
@@ -1017,7 +1018,7 @@ class DBHandler:
         """
         jira_names = JIRANames()
         format_issues = {}
-        if not site_id or issue_key_list:
+        if not site_id and not issue_key_list:
             _log.error('Site ID or a list of issue keys must be specified.')
             return format_issues
 
@@ -1058,8 +1059,9 @@ class DBHandler:
             upload_comment_field=jira_names.strip_customfield(
                 'upload_comment'))
 
+        # Site ID in JIRA can hold multiple site_ids
         if site_id:
-            query_pieces.append('AND a.STRINGVALUE = %(site_id)s ')
+            query_pieces.append('AND %(site_id)s LIKE a.STRINGVALUE')
             query_args['site_id'] = site_id
 
         if issue_key_list:
@@ -1103,6 +1105,9 @@ class DBHandler:
         return format_issues
 
     def get_qaqc_results(self):
+        # ToDo: convert to new jira db
+        # ToDo: add issue type as output
+
         results = {}
         site_id_field = 'Site ID'
         project_name = 'Data QAQC'
@@ -1151,7 +1156,7 @@ class DBHandler:
 
     def get_last_base_gen_time(self):
         results = {}
-        query = ('SELECT site_id, MAX(processdatetime) last_BASE_timestamp '
+        query = ('SELECT site_id, MAX(processdatetime) AS last_base_timestamp '
                  'FROM qaqcProcessingLog '
                  'WHERE processtype = %s '
                  'GROUP BY site_id '
@@ -1167,7 +1172,7 @@ class DBHandler:
             conn.autocommit(True)
             cursor.execute(query, ('BASE', 'other'))
             for row in cursor:
-                results[row.get('site_id')] = row.get('last_BASE_timestamp')
+                results[row.get('site_id')] = row.get('last_base_timestamp')
         return results
 
     def get_data_qaqc_in_process_sites(self):

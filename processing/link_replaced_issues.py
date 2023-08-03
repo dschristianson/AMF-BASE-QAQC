@@ -25,24 +25,12 @@ class LinkIssuesError(Exception):
 class LinkIssues:
     def __init__(self):
         self.qaqc_db_handler = None
-        self.jira_db_handler = None
         self.ts_util = TimestampUtil()
-        self.jira_project = self._init_config()
-
-    def _init_config(self, cfg_filename='qaqc.cfg'):
-        jira_project = None
-        config = ConfigParser()
-        cwd = os.getcwd()
-        cfg_path = os.path.join(cwd, cfg_filename)
-        cfg_section = 'JIRA'
-        with open(cfg_path) as cfg:
-            config.read_file(cfg)
-            if config.has_section(cfg_section):
-                jira_project = config.get(cfg_section, 'project')
-        return jira_project
+        self.jira = JIRAInterface(configure_organizations=False)
+        self.jira_project = self.jira.jira_project
 
     def configure_db_handlers(self, cfg_filename='qaqc.cfg'):
-        hostname, user, auth, qaqc_db, jira_db = None, None, None, None, None
+        hostname, user, auth, qaqc_db = None, None, None, None
         config = ConfigParser()
         cwd = os.getcwd()
         cfg_path = os.path.join(cwd, cfg_filename)
@@ -54,12 +42,10 @@ class LinkIssues:
                 user = config.get(cfg_section, 'flux_user')
                 auth = config.get(cfg_section, 'flux_auth')
                 qaqc_db = config.get(cfg_section, 'flux_db_name')
-                jira_db = config.get(cfg_section, 'jira_db_name')
             if hostname is None:
                 _log.error(f'Config section {cfg_section} not found.')
                 raise LinkIssuesError
         self.db_handler = DBHandler(hostname, user, auth, qaqc_db)
-        self.jira_db_handler = DBHandler(hostname, user, auth, jira_db)
 
     def get_uploaded_files(self, site_id: str) -> list:
         return self.qaqc_db_handler.get_upload_file_info_for_site(site_id)
@@ -201,7 +187,7 @@ class LinkIssues:
         if len(process_dates.intersection(candidate_dates)) < 30:
             return None, False
 
-        # If there are no already identified files_replaced, return
+        # If there are not already identified files_replaced, return
         if not files_replaced:
             return candidate_process_id, False
 
@@ -239,6 +225,7 @@ class LinkIssues:
         site_id = upload_info['SITE_ID']
         uploaded_files = self.get_uploaded_files(site_id)
 
+        # If there is only one uploaded file, then return empty lists
         if len(uploaded_files) < 2:
             return [], []
 
@@ -295,11 +282,8 @@ class LinkIssues:
     def get_jira_format_issues_for_site(
             self, site_id: str, new_report_key: str) -> (
             dict, Union[None, dict]):
-        # hook up to db_handler method: ORDER BY DESC KEYS
-        # db_handler: send site_id
         # pop off the current report using the new_report_key
-        site_format_issues = self.jira_db_handler.get_format_issues(
-            jira_project=self.jira_project, site_id=site_id)
+        site_format_issues = self.jira.get_format_issues(site_id=site_id)
         if new_report_key not in site_format_issues.keys():
             _log.error(f'Report {new_report_key} not found in site {site_id} '
                        'Format QA/QC reports.')

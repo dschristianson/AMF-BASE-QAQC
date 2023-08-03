@@ -64,7 +64,7 @@ class DataQAQCAutoRunHandler:
 
         return reporter, jira_host, jira_issue_path
 
-    def get_data_qaqc_candidates(self, qaqc_issues, last_BASE_gen_time_lookup):
+    def get_data_qaqc_candidates(self, qaqc_issues, last_base_gen_time_lookup):
         data_qaqc_wait_state = 'Attempt Data QAQC'
         auto_data_qaqc_ok_states = (
             'Attempt Data QAQC', 'Canceled', 'Replace with Upload')
@@ -75,7 +75,7 @@ class DataQAQCAutoRunHandler:
         for site_id, issues in qaqc_issues.items():
             timestamp_sorted_issues = sorted(
                 issues, key=lambda k: k.get('last_create'), reverse=True)
-            last_BASE_ts = last_BASE_gen_time_lookup.get(site_id)
+            last_BASE_ts = last_base_gen_time_lookup.get(site_id)
             if last_BASE_ts:
                 last_BASE_ts = datetime.strptime(
                     last_BASE_ts, self.ts_util.JIRA_TS_FORMAT)
@@ -88,6 +88,7 @@ class DataQAQCAutoRunHandler:
             issue_timestamp = issue.get('last_create')
             issue_label = issue.get('label')
 
+            # ToDo: First check if latest issue is Format QAQC
             if (qaqc_status != data_qaqc_wait_state or
                 (last_BASE_ts is not None and
                  issue_timestamp < last_BASE_ts) or
@@ -201,11 +202,11 @@ class DataQAQCAutoRunHandler:
         self.qaqc_db_handler.log_auto_data_qaqc_run(datetime.now(), entries)
 
     def main(self):
-        last_BASE_gen_time_lookup = \
-            self.qaqc_db_handler.get_last_BASE_gen_time()
+        last_base_gen_time_lookup = \
+            self.qaqc_db_handler.get_last_base_gen_time()
         qaqc_issues = self.jira_db_handler.get_qaqc_results()
         candidates, need_review = self.get_data_qaqc_candidates(
-            qaqc_issues, last_BASE_gen_time_lookup)
+            qaqc_issues, last_base_gen_time_lookup)
         in_process_sites = \
             self.qaqc_db_handler.get_data_qaqc_in_process_sites()
         for k, v in in_process_sites.items():

@@ -33,11 +33,14 @@ class JIRANames:
     format_QAQC_replacement_file_uploaded = 'tbd'
     format_waiting_for_support = '211'
     sub_issue_name = 'Issue'
-    upload_comment = 'customfield_10400'
     base_update_resolution = 'BASE Updated (see linked issue)'
     label_results_sent = 'Results_Sent'
     label_self_review = 'Self-Review'
     reminder_schedule = 'customfield_10700'
+    issue_created = 'created'
+    issue_reporter = 'reporter'
+    issue_participants = 'Request participants'
+    issue_status = 'status'
 
     class Status:
         __field_name__ = 'status'
@@ -45,6 +48,8 @@ class JIRANames:
         waiting_for_customer_name = 'Waiting for Customer'
         format_qaqc_complete_id = '10200'
         format_qaqc_complete_name = 'Format QAQC Complete'
+        format_attempt_data_qaqc_name = 'Attempt Data QAQC'
+        format_attempt_data_qaqc_id = '10213'
 
     class RequestType:
         __field_name__ = 'Customer Request Type'
