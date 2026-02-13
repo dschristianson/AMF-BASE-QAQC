@@ -1,0 +1,7 @@
+This is an example license file.
+There is some formatting like the following.
+************** HEADER
+1) numbered bullets
+2) another bullet
+************** HEADER
+Text here.
